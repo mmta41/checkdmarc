@@ -27,7 +27,7 @@ from expiringdict import ExpiringDict
 import publicsuffix2
 import dns.resolver
 import dns.exception
-import timeout_decorator
+import wrapt_timeout_decorator
 from pyleri import (Grammar,
                     Regex,
                     Sequence,
@@ -1765,8 +1765,8 @@ def get_spf_record(domain, nameservers=None, timeout=6.0):
     return parsed_record
 
 
-@timeout_decorator.timeout(5, timeout_exception=SMTPError,
-                           exception_message="Connection timed out")
+@wrapt_timeout_decorator.timeout(5, timeout_exception=SMTPError,
+                                 exception_message="Connection timed out")
 def test_tls(hostname, ssl_context=None, cache=None):
     """
     Attempt to connect to a SMTP server port 465 and validate TLS/SSL support
@@ -1880,8 +1880,8 @@ def test_tls(hostname, ssl_context=None, cache=None):
         return tls
 
 
-@timeout_decorator.timeout(5, timeout_exception=SMTPError,
-                           exception_message="Connection timed out")
+@wrapt_timeout_decorator.timeout(5, timeout_exception=SMTPError,
+                                 exception_message="Connection timed out")
 def test_starttls(hostname, ssl_context=None, cache=None):
     """
     Attempt to connect to a SMTP server and validate STARTTLS support
@@ -2083,22 +2083,20 @@ def get_mx_hosts(domain, skip_tls=False,
                                     "the A/AAAA DNS records for "
                                     "{0} do not resolve to "
                                     "{1}".format(hostname, address))
-        if not skip_tls and platform.system() == "Windows":
-            logging.warning("Testing TLS is not supported on Windows")
-            skip_tls = True
         if skip_tls:
             logging.debug("Skipping TLS/SSL tests on {0}".format(
                 host["hostname"]))
         else:
             try:
                 starttls = test_starttls(host["hostname"],
-                                         cache=STARTTLS_CACHE)
+                                         cache=OrderedDict(STARTTLS_CACHE))
                 if starttls:
                     tls = True
                 else:
                     warnings.append("STARTTLS is not supported on {0}".format(
                         host["hostname"]))
-                    tls = test_tls(host["hostname"], cache=TLS_CACHE)
+                    tls = test_tls(host["hostname"],
+                                   cache=OrderedDict(TLS_CACHE))
 
                 if not tls:
                     warnings.append("SSL/TLS is not supported on {0}".format(
