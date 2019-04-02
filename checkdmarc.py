@@ -20,10 +20,9 @@ import shutil
 import atexit
 import requests
 from ssl import SSLError, CertificateError, create_default_context
-
 from io import StringIO
-from expiringdict import ExpiringDict
 
+from expiringdict import ExpiringDict
 import publicsuffix2
 import dns.resolver
 import dns.exception
@@ -1997,6 +1996,7 @@ def test_starttls(hostname, ssl_context=None, cache=None):
 
 
 def get_mx_hosts(domain, skip_tls=False,
+                 ssl_context=None,
                  approved_hostnames=None, parked=False,
                  nameservers=None, timeout=6.0):
     """
@@ -2005,6 +2005,7 @@ def get_mx_hosts(domain, skip_tls=False,
     Args:
         domain (str): A domain name
         skip_tls (bool): Skip STARTTLS testing
+        ssl_context: A SSL context
         approved_hostnames (list): A list of approved MX hostname substrings
         parked (bool): Indicates that the domains are parked
         nameservers (list): A list of nameservers to query
@@ -2087,8 +2088,11 @@ def get_mx_hosts(domain, skip_tls=False,
             logging.debug("Skipping TLS/SSL tests on {0}".format(
                 host["hostname"]))
         else:
+            if ssl_context is None:
+                ssl_context = create_default_context()
             try:
                 starttls = test_starttls(host["hostname"],
+                                         ssl_context=ssl_context,
                                          cache=OrderedDict(STARTTLS_CACHE))
                 if starttls:
                     tls = True
@@ -2096,6 +2100,7 @@ def get_mx_hosts(domain, skip_tls=False,
                     warnings.append("STARTTLS is not supported on {0}".format(
                         host["hostname"]))
                     tls = test_tls(host["hostname"],
+                                   ssl_context=ssl_context,
                                    cache=OrderedDict(TLS_CACHE))
 
                 if not tls:
@@ -2165,6 +2170,7 @@ def check_domains(domains, parked=False,
                   approved_nameservers=None,
                   approved_mx_hostnames=None,
                   skip_tls=False,
+                  ssl_context=None,
                   include_dmarc_tag_descriptions=False,
                   nameservers=None, timeout=6.0, wait=0.0):
     """
@@ -2177,6 +2183,7 @@ def check_domains(domains, parked=False,
         approved_nameservers (list): A list of approved nameservers
         approved_mx_hostnames (list): A list of approved MX hostname
         skip_tls (bool: Skip STARTTLS testing
+        ssl_context: A SSL context
         include_dmarc_tag_descriptions (bool): Include descriptions of DMARC
                                                tags and/or tag values in the
                                                results
