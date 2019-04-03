@@ -11,3 +11,4 @@ flake8
 wheel
 nose
 rstcheck>=3.3.1
+codecov
