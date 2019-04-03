@@ -1766,6 +1766,16 @@ def get_spf_record(domain, nameservers=None, timeout=6.0):
 
 @wrapt_timeout_decorator.timeout(5, timeout_exception=SMTPError,
                                  exception_message="Connection timed out")
+def _connect_smtp(hostname):
+    return smtplib.SMTP(hostname)
+
+
+@wrapt_timeout_decorator.timeout(5, timeout_exception=SMTPError,
+                                 exception_message="Connection timed out")
+def _connect_smtp_tls(hostname, ssl_context=None):
+    return smtplib.SMTP_SSL(hostname, context=ssl_context)
+
+
 def test_tls(hostname, ssl_context=None, cache=None):
     """
     Attempt to connect to a SMTP server port 465 and validate TLS/SSL support
@@ -1789,7 +1799,7 @@ def test_tls(hostname, ssl_context=None, cache=None):
         ssl_context = create_default_context()
     logging.debug("Testing TLS/SSL on {0}".format(hostname))
     try:
-        server = smtplib.SMTP_SSL(hostname, context=ssl_context)
+        server = _connect_smtp_tls(hostname, ssl_context=ssl_context)
         server.ehlo_or_helo_if_needed()
         tls = True
         try:
@@ -2093,7 +2103,7 @@ def get_mx_hosts(domain, skip_tls=False,
             try:
                 starttls = test_starttls(host["hostname"],
                                          ssl_context=ssl_context,
-                                         cache=OrderedDict(STARTTLS_CACHE))
+                                         cache=STARTTLS_CACHE)
                 if starttls:
                     tls = True
                 else:
@@ -2101,7 +2111,7 @@ def get_mx_hosts(domain, skip_tls=False,
                         host["hostname"]))
                     tls = test_tls(host["hostname"],
                                    ssl_context=ssl_context,
-                                   cache=OrderedDict(TLS_CACHE))
+                                   cache=TLS_CACHE)
 
                 if not tls:
                     warnings.append("SSL/TLS is not supported on {0}".format(
@@ -2236,6 +2246,7 @@ def check_domains(domains, parked=False,
             domain_results["mx"] = get_mx_hosts(
                 domain,
                 skip_tls=skip_tls,
+                ssl_context=ssl_context,
                 approved_hostnames=approved_mx_hostnames,
                 nameservers=nameservers,
                 timeout=timeout)
