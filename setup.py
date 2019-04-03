@@ -15,7 +15,7 @@ from setuptools import setup
 from codecs import open
 from os import path
 
-__version__ = "4.1.8"
+__version__ = "4.1.9"
 desc = "A Python module and command line parser for SPF and DMARC records"
 
 here = path.abspath(path.dirname(__file__))
@@ -92,7 +92,9 @@ setup(
     # requirements files see:
     # https://packaging.python.org/en/latest/requirements.html
     install_requires=['dnspython', 'expiringdict', 'pyleri',
-                      'publicsuffix2', 'requests', 'timeout-decorator'],
+                      'publicsuffix2', 'requests',
+                      'git+https://github.com/'
+                      'bitranox/wrapt_timeout_decorator.git@64c84ea'],
 
     entry_points={
         'console_scripts': ['checkdmarc=checkdmarc:_main'],

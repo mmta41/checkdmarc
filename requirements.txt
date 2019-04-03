@@ -3,7 +3,7 @@ expiringdict
 pyleri
 publicsuffix2
 requests
-timeout-decorator
+git+https://github.com/bitranox/wrapt_timeout_decorator.git@64c84ea
 sphinx
 sphinx_rtd_theme
 collective.checkdocs
