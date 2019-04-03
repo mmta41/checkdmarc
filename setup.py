@@ -92,9 +92,10 @@ setup(
     # requirements files see:
     # https://packaging.python.org/en/latest/requirements.html
     install_requires=['dnspython', 'expiringdict', 'pyleri',
-                      'publicsuffix2', 'requests',
-                      'git+https://github.com/'
-                      'bitranox/wrapt_timeout_decorator.git@64c84ea'],
+                      'publicsuffix2', 'requests'],
+    dependency_links=[
+        "https://github.com/bitranox/wrapt_timeout_decorator/tarball/"
+        "master#d7ed33c"],
 
     entry_points={
         'console_scripts': ['checkdmarc=checkdmarc:_main'],
