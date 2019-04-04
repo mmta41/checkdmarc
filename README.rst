@@ -1,7 +1,7 @@
 checkdmarc
 ==========
 
-|Build Status|
+|Build Status| |Code Coverage| |PyPI Package|
 
 A Python module and command line utility for validating SPF and DMARC DNS records
 
@@ -234,9 +234,14 @@ DMARC guides
 
 * `Demystifying DMARC`_ - A complete guide to SPF, DKIM, and DMARC
 
-
 .. |Build Status| image:: https://travis-ci.org/domainaware/checkdmarc.svg?branch=master
    :target: https://travis-ci.org/domainaware/checkdmarc
+
+.. |Code Coverage| image:: https://codecov.io/gh/domainaware/checkdmarc/branch/master/graph/badge.svg
+   :target: https://codecov.io/gh/domainaware/checkdmarc
+
+..  |PyPI Package| image:: https://badge.fury.io/py/checkdmarc.svg
+    :target: https://badge.fury.io/py/checkdmarc
 
 .. _Cloudflare's public resolvers: https://1.1.1.1/
 
