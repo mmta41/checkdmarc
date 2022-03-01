@@ -37,6 +37,10 @@ from pyleri import (Grammar,
                     )
 import ipaddress
 
+from urllib import parse
+import validators
+
+
 """Copyright 2019 Sean Whalen
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,7 +60,7 @@ __version__ = "4.4.1"
 DMARC_VERSION_REGEX_STRING = r"v=DMARC1;"
 BIMI_VERSION_REGEX_STRING = r"v=BIMI1;"
 DMARC_TAG_VALUE_REGEX_STRING = r"([a-z]{1,5})=([\w.:@/+!,_\- ]+)"
-BIMI_TAG_VALUE_REGEX_STRING = r"([a-z]{1})=(.*)"
+BIMI_TAG_VALUE_REGEX_STRING = r"([a-z]{1})=([\w.:@/+!,_\- ]+)"
 MAILTO_REGEX_STRING = r"^(mailto):" \
                       r"([\w\-!#$%&'*+-/=?^_`{|}~]" \
                       r"[\w\-.!#$%&'*+-/=?^_`{|}~]*@[\w\-.]+)(!\w+)?"
@@ -1252,6 +1256,46 @@ def verify_dmarc_report_destination(source_domain, destination_domain,
     return True
 
 
+def parse_bimi_record(record, domain, parked=False,
+                      include_tag_descriptions=False,
+                      nameservers=None, timeout=2.0):
+    warnings = []
+    record = record.strip('"')
+    bimi_syntax_checker = _BIMIGrammar()
+    parsed_record = bimi_syntax_checker.parse(record)
+    if not parsed_record.is_valid:
+        expecting = list(
+            map(lambda x: str(x).strip('"'), list(parsed_record.expecting)))
+        raise BIMISyntaxError("Error: Expected {0} at position {1} in: "
+                              "{2}".format(" or ".join(expecting),
+                                           parsed_record.pos, record))
+
+    pairs = BIMI_TAG_VALUE_REGEX.findall(record)
+    tags = OrderedDict()
+    # Find explicit tags
+    for pair in pairs:
+        tags[pair[0]] = OrderedDict(
+            [("value", str(pair[1])), ("explicit", True)])
+
+    if "l" not in tags:
+        raise BIMISyntaxError('The record is missing the required logo ("l") tag')
+
+    valid = validators.url(tags["l"]["value"])
+
+    if not valid:
+        raise BIMISyntaxError('The ("l") tag must be a valid url')
+
+    location = parse.urlsplit(tags["l"]["value"])
+    if location.scheme.lower() != "https":
+        warnings.append(
+            "The location of the logo must represented by a URL with 'HTTPS' only - it will not work with 'HTTP'.")
+    _, ext = os.path.splitext(location.path)
+    if ext.lower() != ".svg":
+        warnings.append("The image format for the logo must be SVG (.svg) or your logo will not display correctly.")
+
+    return OrderedDict([("tags", tags), ("warnings", warnings)])
+
+
 def parse_dmarc_record(record, domain, parked=False,
                        include_tag_descriptions=False,
                        nameservers=None, timeout=2.0):
@@ -1522,6 +1566,24 @@ def get_dmarc_record(domain, include_tag_descriptions=False, nameservers=None,
                          query["record"]),
                         ("location", query["location"]),
                         ("parsed", tags)])
+
+
+def get_bimi_record(domain, include_tag_descriptions=False, nameservers=None,
+                    timeout=2.0):
+    query = query_bimi_record(domain, nameservers=nameservers,
+                              timeout=timeout)
+
+    print(query)
+    # tag_descriptions = include_tag_descriptions
+    #
+    # tags = parse_dmarc_record(query["record"], query["location"],
+    #                           include_tag_descriptions=tag_descriptions,
+    #                           nameservers=nameservers, timeout=timeout)
+    #
+    # return OrderedDict([("record",
+    #                      query["record"]),
+    #                     ("location", query["location"]),
+    #                     ("parsed", tags)])
 
 
 def query_spf_record(domain, nameservers=None, timeout=2.0):
@@ -2262,7 +2324,6 @@ def get_mx_hosts(domain, skip_tls=False,
                     host["hostname"]))
             warnings = list(set(warnings))
 
-
     return OrderedDict([("hosts", hosts), ("warnings", warnings)])
 
 
@@ -2476,6 +2537,35 @@ def check_domains(domains, parked=False,
             if hasattr(error, "data") and error.data:
                 for key in error.data:
                     domain_results["dmarc"][key] = error.data[key]
+
+        domain_results["bimi"] = OrderedDict([("record", None),
+                                              ("valid", True),
+                                              ("location", None)])
+        try:
+            bimi_query = query_bimi_record(domain,
+                                           nameservers=nameservers,
+                                           timeout=timeout)
+            domain_results["bimi"]["record"] = bimi_query["record"]
+            domain_results["bimi"]["location"] = bimi_query["location"]
+            parsed_bimi_record = parse_bimi_record(
+                bimi_query["record"],
+                bimi_query["location"],
+                parked=parked,
+                include_tag_descriptions=include_dmarc_tag_descriptions,
+                nameservers=nameservers,
+                timeout=timeout)
+            domain_results["bimi"]["warnings"] = bimi_query["warnings"]
+
+            domain_results["bimi"]["tags"] = parsed_bimi_record["tags"]
+            domain_results["bimi"]["warnings"] += parsed_bimi_record[
+                "warnings"]
+        except BIMIError as error:
+            domain_results["bimi"]["error"] = str(error)
+            domain_results["bimi"]["valid"] = False
+            if hasattr(error, "data") and error.data:
+                for key in error.data:
+                    domain_results["bimi"][key] = error.data[key]
+
         results.append(domain_results)
         if wait > 0.0:
             logging.debug("Sleeping for {0} seconds".format(wait))
