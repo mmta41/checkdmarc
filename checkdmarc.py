@@ -19,7 +19,7 @@ import platform
 import shutil
 import atexit
 import requests
-from ssl import SSLError, CertificateError, create_default_context
+from ssl import SSLError, CertificateError, create_default_context, CERT_NONE
 
 from io import StringIO
 from expiringdict import ExpiringDict
@@ -72,10 +72,10 @@ SPF_MECHANISM_REGEX = compile(SPF_MECHANISM_REGEX_STRING, IGNORECASE)
 AFTER_ALL_REGEX = compile(AFTER_ALL_REGEX_STRING, IGNORECASE)
 
 USER_AGENT = "Mozilla/5.0 (({0} {1})) parsedmarc/{2}".format(
-            platform.system(),
-            platform.release(),
-            __version__
-        )
+    platform.system(),
+    platform.release(),
+    __version__
+)
 
 DNS_CACHE = ExpiringDict(max_len=200000, max_age_seconds=1800)
 TLS_CACHE = ExpiringDict(max_len=200000, max_age_seconds=1800)
@@ -98,6 +98,7 @@ class SMTPError(Exception):
 
 class SPFError(Exception):
     """Raised when a fatal SPF error occurs"""
+
     def __init__(self, msg, data=None):
         """
         Args:
@@ -135,6 +136,7 @@ class _DMARCBestPracticeWarning(_DMARCWarning):
 
 class DNSException(Exception):
     """Raised when a general DNS error occurs"""
+
     def __init__(self, error):
         if isinstance(error, dns.exception.Timeout):
             error.kwargs["timeout"] = round(error.kwargs["timeout"], 1)
@@ -142,6 +144,7 @@ class DNSException(Exception):
 
 class DMARCError(Exception):
     """Raised when a fatal DMARC error occurs"""
+
     def __init__(self, msg, data=None):
         """
         Args:
@@ -154,6 +157,7 @@ class DMARCError(Exception):
 
 class SPFRecordNotFound(SPFError):
     """Raised when an SPF record could not be found"""
+
     def __init__(self, error):
         if isinstance(error, dns.exception.Timeout):
             error.kwargs["timeout"] = round(error.kwargs["timeout"], 1)
@@ -169,6 +173,7 @@ class SPFSyntaxError(SPFError):
 
 class SPFTooManyDNSLookups(SPFError):
     """Raised when an SPF record requires too many DNS lookups (10 max)"""
+
     def __init__(self, *args, **kwargs):
         data = dict(dns_lookups=kwargs["dns_lookups"])
         SPFError.__init__(self, args[0], data=data)
@@ -184,6 +189,7 @@ class SPFIncludeLoop(SPFError):
 
 class DMARCRecordNotFound(DMARCError):
     """Raised when a DMARC record could not be found"""
+
     def __init__(self, error):
         if isinstance(error, dns.exception.Timeout):
             error.kwargs["timeout"] = round(error.kwargs["timeout"], 1)
@@ -237,6 +243,7 @@ class MultipleDMARCRecords(DMARCError):
 
 class BIMIError(Exception):
     """Raised when a fatal BIMI error occurs"""
+
     def __init__(self, msg, data=None):
         """
         Args:
@@ -249,6 +256,7 @@ class BIMIError(Exception):
 
 class BIMIRecordNotFound(BIMIError):
     """Raised when a BIMI record could not be found"""
+
     def __init__(self, error):
         if isinstance(error, dns.exception.Timeout):
             error.kwargs["timeout"] = round(error.kwargs["timeout"], 1)
@@ -380,7 +388,7 @@ tag_values = OrderedDict(adkim=OrderedDict(name="DKIM Alignment Mode",
                                                  'regardless of its alignment.'
                                                  ' SPF-specific reporting is '
                                                  'described in AFRF-SPF'
-                                            }
+                                        }
                                         ),
                          p=OrderedDict(name="Requested Mail Receiver Policy",
                                        description='Specifies the policy to '
@@ -425,7 +433,7 @@ tag_values = OrderedDict(adkim=OrderedDict(name="DKIM Alignment Mode",
                                                      'Rejection SHOULD '
                                                      'occur during the SMTP '
                                                      'transaction.'
-                                           }
+                                       }
                                        ),
                          pct=OrderedDict(name="Percentage",
                                          default=100,
@@ -544,7 +552,6 @@ spf_qualifiers = {
     "~": "softfail"
 }
 
-
 bimi_tags = OrderedDict(
     v=OrderedDict(name="Version",
                   description='Identifies the record '
@@ -590,7 +597,7 @@ def get_base_domain(domain, use_fresh_psl=False):
     domain = domain.lower()
     if domain.endswith(".test") or domain.endswith(
             ".example") or domain.endswith(".invalid") or domain.endswith(
-           ".localhost"):
+        ".localhost"):
         parts = domain.strip(".").split(".")
         if len(parts) == 1:
             return parts[0]
@@ -1931,6 +1938,81 @@ def test_tls(hostname, ssl_context=None, cache=None):
         return tls
 
 
+@timeout_decorator.timeout(30, timeout_exception=SMTPError,
+                           exception_message="Connection timed out")
+def test_relay(hostname, ssl_context=None, cache=None):
+    if cache:
+        cached_result = cache.get(hostname, None)
+        if cached_result is not None:
+            if cached_result["error"] is not None:
+                raise SMTPError(cached_result["error"])
+            return cached_result["test_relay"]
+    if ssl_context is None:
+        ssl_context = create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = CERT_NONE
+
+    logging.debug("Testing Relay on {0}".format(hostname))
+    is_relay = False
+    try:
+        server = smtplib.SMTP(hostname)
+        server.source_address = "rezilens-com.mail.protection.outlook.com"
+        server.user = "mohammadm"
+        server.password = "P@ssWord"
+        server.ehlo_or_helo_if_needed()
+        if server.has_extn("starttls"):
+            server.starttls(context=ssl_context)
+            server.ehlo_or_helo_if_needed()
+        server.auth_plain()
+        try:
+            msg = '''
+From: mohammadm@rezilens.com
+Subject: Test
+            '''
+            my_msg = server.sendmail(from_addr="mohammadm@rezilens.com", to_addrs="mohammadm@rezilens.com",
+                                     msg=msg)
+            is_relay = True
+            logging.debug("Mail {0}".format(my_msg))
+            logging.debug("Length {0}".format(len(my_msg[0])))
+        except smtplib.SMTPRecipientsRefused as e:
+            logging.debug("SMTPRecipientsRefused")
+            logging.debug(e)
+        except smtplib.SMTPSenderRefused as e:
+            logging.debug("SMTPSenderRefused")
+            logging.debug(e)
+        except smtplib.SMTPNotSupportedError as e:
+            logging.debug("SMTPNotSupportedError")
+            logging.debug(e)
+        except smtplib.SMTPDataError as e:
+            logging.debug("SMTPDataError")
+            logging.debug(e)
+            error = str(e).lower()
+            if not ("denied" in error or "blocked" in error or "spam" in error or "no exist" in error):
+                is_relay = True
+        except Exception as e:
+            logging.debug("Exception on send mail")
+            logging.debug(e)
+            if len(str(e)) == 0:
+                is_relay = True
+
+        try:
+            server.quit()
+            server.close()
+        except Exception as e:
+            logging.debug(e)
+        finally:
+            if cache:
+                cache[hostname] = dict(test_relay=False, error=None)
+            return is_relay
+
+    except Exception as e:
+        error = e.__str__()
+        logging.debug(error)
+        if cache:
+            cache[hostname] = dict(starttls=False, error=error)
+        raise SMTPError(error)
+
+
 @timeout_decorator.timeout(5, timeout_exception=SMTPError,
                            exception_message="Connection timed out")
 def test_starttls(hostname, ssl_context=None, cache=None):
@@ -1954,6 +2036,8 @@ def test_starttls(hostname, ssl_context=None, cache=None):
             return cached_result["starttls"]
     if ssl_context is None:
         ssl_context = create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = CERT_NONE
     logging.debug("Testing STARTTLS on {0}".format(hostname))
     try:
         server = smtplib.SMTP(hostname)
@@ -2153,34 +2237,42 @@ def get_mx_hosts(domain, skip_tls=False,
             logging.debug("Skipping TLS/SSL tests on {0}".format(
                 host["hostname"]))
         else:
-            try:
-                starttls = test_starttls(host["hostname"],
-                                         cache=STARTTLS_CACHE)
-                if not starttls:
-                    warnings.append("STARTTLS is not supported on {0}".format(
-                        host["hostname"]))
-                tls = test_tls(host["hostname"], cache=TLS_CACHE)
 
-                if not tls:
-                    warnings.append("SSL/TLS is not supported on {0}".format(
-                        host["hostname"]))
-                host["tls"] = tls
-                host["starttls"] = starttls
-            except DNSException as warning:
-                warnings.append(str(warning))
-                tls = False
-                starttls = False
-                host["tls"] = tls
-                host["starttls"] = starttls
-            except SMTPError as error:
-                tls = False
-                starttls = False
-                warnings.append("{0}: {1}".format(host["hostname"], error))
+            starttls, warning = mail_server_checks(test_starttls, host["hostname"], STARTTLS_CACHE)
+            if len(warning) > 0:
+                warnings.append(warning)
+            elif not starttls:
+                warnings.append("STARTTLS is not supported on {0}".format(
+                    host["hostname"]))
 
-                host["tls"] = tls
-                host["starttls"] = starttls
+            tls, warning = mail_server_checks(test_tls, host["hostname"], TLS_CACHE)
+            if len(warning) > 0:
+                warnings.append(warning)
+            elif not tls:
+                warnings.append("SSL/TLS is not supported on {0}".format(
+                    host["hostname"]))
+
+            relay, warning = mail_server_checks(test_relay, host["hostname"])
+            host["is_relay"] = False
+            if len(warning) > 0:
+                warnings.append(warning)
+            elif relay:
+                host["is_relay"] = True
+                warnings.append("Potential relay mail server on {0}".format(
+                    host["hostname"]))
+            warnings = list(set(warnings))
+
 
     return OrderedDict([("hosts", hosts), ("warnings", warnings)])
+
+
+def mail_server_checks(fn, hostname, cache=None):
+    try:
+        return fn(hostname, cache=cache), ""
+    except DNSException as warning:
+        return False, str(warning)
+    except SMTPError as error:
+        return False, "{0}: {1}".format(hostname, error)
 
 
 def get_nameservers(domain, approved_nameservers=None,
@@ -2601,17 +2693,6 @@ def _main():
         logging.getLogger().setLevel(logging.DEBUG)
         logging.debug("Debug output enabled")
     domains = args.domain
-    if len(domains) == 1 and os.path.exists(domains[0]):
-        with open(domains[0]) as domains_file:
-            domains = sorted(list(set(
-                map(lambda d: d.rstrip(".\r\n").strip().lower().split(",")[0],
-                    domains_file.readlines()))))
-            not_domains = []
-            for domain in domains:
-                if "." not in domain:
-                    not_domains.append(domain)
-            for domain in not_domains:
-                domains.remove(domain)
 
     results = check_domains(domains, skip_tls=args.skip_tls,
                             parked=args.parked,
