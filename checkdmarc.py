@@ -2034,6 +2034,7 @@ def test_relay(hostname, cache=None):
             return cached_result["test_relay"]
 
     logging.debug("Testing Relay on {0}".format(hostname))
+    is_relay = False
     try:
         server_name = 'rezilens-com.mail.protection.outlook.com'
         sender = 'relaycheck@rezilens.com'
@@ -2062,12 +2063,21 @@ def test_relay(hostname, cache=None):
                 cache[hostname] = dict(is_relay=False, error=None)
             return is_relay
 
-    except Exception as e:
+    except OSError as e:
         error = e.__str__()
-        logging.debug(error)
         if cache:
             cache[hostname] = dict(is_relay=False, error=error)
         raise SMTPError(error)
+
+    except Exception as e:
+        error = e.__str__()
+        if cache:
+            cache[hostname] = dict(is_relay=False, error=error)
+        raise SMTPError(error)
+    finally:
+        if cache:
+            cache[hostname] = dict(is_relay=is_relay, error=None)
+        return is_relay
 
 
 @timeout_decorator.timeout(5, timeout_exception=SMTPError,
