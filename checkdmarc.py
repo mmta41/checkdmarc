@@ -40,7 +40,6 @@ import ipaddress
 from urllib import parse
 import validators
 
-
 """Copyright 2019 Sean Whalen
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -84,6 +83,7 @@ USER_AGENT = "Mozilla/5.0 (({0} {1})) parsedmarc/{2}".format(
 DNS_CACHE = ExpiringDict(max_len=200000, max_age_seconds=1800)
 TLS_CACHE = ExpiringDict(max_len=200000, max_age_seconds=1800)
 STARTTLS_CACHE = ExpiringDict(max_len=200000, max_age_seconds=1800)
+ISRELAY_CACHE = ExpiringDict(max_len=200000, max_age_seconds=1800)
 
 TMPDIR = tempfile.mkdtemp()
 
@@ -568,7 +568,20 @@ bimi_tags = OrderedDict(
                               'the entire retrieved '
                               'record MUST be ignored. '
                               'It MUST be the first '
-                              'tag in the list.')
+                              'tag in the list.'),
+    l=OrderedDict(name="Location",
+                  description='The value of this tag is a comma separated list of base URLs representing the location '
+                              'of the brand indicator files. All clients MUST support use of at least 2 location '
+                              'URIs, used in order. Clients MAY support more locations. The supported transport is '
+                              'HTTPS only.'),
+    a=OrderedDict(name="Authority Evidence Location",
+                  description='If present, this tag MUST have an empty value or its value MUST be a single URI.  An '
+                              'empty value for the tag is interpreted to mean the Domain Owner does not wish to '
+                              'publish or does not have authority evidence to disclose.  The URI, if present, '
+                              'MUST contain a fully qualified domain name (FQDN) and MUST specify HTTPS as the URI '
+                              'scheme ("https").  The URI SHOULD specify the location of a publicly retrievable BIMI '
+                              'Evidence Document.  The format for evidence documents is defined in a separate '
+                              'document.')
 )
 
 
@@ -1068,7 +1081,7 @@ def query_bimi_record(domain, selector="default", nameservers=None,
                         ("warnings", warnings)])
 
 
-def get_dmarc_tag_description(tag, value=None):
+def get_tag_description(tag, descriptionList, value=None):
     """
     Get the name, default value, and description for a DMARC tag, amd/or a
     description for a tag value
@@ -1083,20 +1096,20 @@ def get_dmarc_tag_description(tag, value=None):
                      - ``default``- the tag's default value
                      - ``description`` - A description of the tag or value
     """
-    name = tag_values[tag]["name"]
-    description = tag_values[tag]["description"]
+    name = descriptionList[tag]["name"]
+    description = descriptionList[tag]["description"]
     default = None
-    if "default" in tag_values[tag]:
-        default = tag_values[tag]["default"]
-    if type(value) == str and "values" in tag_values[tag] and value in \
-            tag_values[tag]["values"][value]:
-        description = tag_values[tag]["values"][value]
-    elif type(value) == list and "values" in tag_values[tag]:
+    if "default" in descriptionList[tag]:
+        default = descriptionList[tag]["default"]
+    if type(value) == str and "values" in descriptionList[tag] and value in \
+            descriptionList[tag]["values"][value]:
+        description = descriptionList[tag]["values"][value]
+    elif type(value) == list and "values" in descriptionList[tag]:
         new_description = ""
         for value_value in value:
-            if value_value in tag_values[tag]["values"]:
+            if value_value in descriptionList[tag]["values"]:
                 new_description += "{0}: {1}\n\n".format(value_value,
-                                                         tag_values[tag][
+                                                         descriptionList[tag][
                                                              "values"][
                                                              value_value])
         new_description = new_description.strip()
@@ -1256,9 +1269,7 @@ def verify_dmarc_report_destination(source_domain, destination_domain,
     return True
 
 
-def parse_bimi_record(record, domain, parked=False,
-                      include_tag_descriptions=False,
-                      nameservers=None, timeout=2.0):
+def parse_bimi_record(record, include_tag_descriptions=True):
     warnings = []
     record = record.strip('"')
     bimi_syntax_checker = _BIMIGrammar()
@@ -1280,18 +1291,30 @@ def parse_bimi_record(record, domain, parked=False,
     if "l" not in tags:
         raise BIMISyntaxError('The record is missing the required logo ("l") tag')
 
-    valid = validators.url(tags["l"]["value"])
+    urls = tags["l"]["value"].split(",")
+    for url in urls:
+        url = url.strip()
+        logging.debug("Testing Url {0}".format(url))
+        valid = validators.url(url)
+        if not valid:
+            raise BIMISyntaxError('The ("l") tag must be a valid url or url list')
+        location = parse.urlsplit(url)
+        if location.scheme.lower() != "https":
+            warnings.append(
+                "The location of the {0} must represented by a URL with 'HTTPS' only - it will not work with 'HTTP'."
+                    .format(url))
+        _, ext = os.path.splitext(location.path)
+        if ext.lower() != ".svg":
+            warnings.append("The image format for the {0} must be SVG (.svg) or your logo will not display correctly."
+                            .format(url))
 
-    if not valid:
-        raise BIMISyntaxError('The ("l") tag must be a valid url')
-
-    location = parse.urlsplit(tags["l"]["value"])
-    if location.scheme.lower() != "https":
-        warnings.append(
-            "The location of the logo must represented by a URL with 'HTTPS' only - it will not work with 'HTTP'.")
-    _, ext = os.path.splitext(location.path)
-    if ext.lower() != ".svg":
-        warnings.append("The image format for the logo must be SVG (.svg) or your logo will not display correctly.")
+    if include_tag_descriptions:
+        for tag in tags:
+            details = get_tag_description(tag, bimi_tags, tags[tag]["value"])
+            tags[tag]["name"] = details["name"]
+            if details["default"]:
+                tags[tag]["default"] = details["default"]
+            tags[tag]["description"] = details["description"]
 
     return OrderedDict([("tags", tags), ("warnings", warnings)])
 
@@ -1513,7 +1536,7 @@ def parse_dmarc_record(record, domain, parked=False,
     # Add descriptions if requested
     if include_tag_descriptions:
         for tag in tags:
-            details = get_dmarc_tag_description(tag, tags[tag]["value"])
+            details = get_tag_description(tag, tag_values, tags[tag]["value"])
             tags[tag]["name"] = details["name"]
             if details["default"]:
                 tags[tag]["default"] = details["default"]
@@ -2002,60 +2025,32 @@ def test_tls(hostname, ssl_context=None, cache=None):
 
 @timeout_decorator.timeout(30, timeout_exception=SMTPError,
                            exception_message="Connection timed out")
-def test_relay(hostname, ssl_context=None, cache=None):
+def test_relay(hostname, cache=None):
     if cache:
         cached_result = cache.get(hostname, None)
         if cached_result is not None:
             if cached_result["error"] is not None:
                 raise SMTPError(cached_result["error"])
             return cached_result["test_relay"]
-    if ssl_context is None:
-        ssl_context = create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = CERT_NONE
 
     logging.debug("Testing Relay on {0}".format(hostname))
-    is_relay = False
     try:
+        server_name = 'rezilens-com.mail.protection.outlook.com'
+        sender = 'relaycheck@rezilens.com'
+        recip = 'relaycheck@rezilens.com'
+
         server = smtplib.SMTP(hostname)
-        server.source_address = "rezilens-com.mail.protection.outlook.com"
-        server.user = "mohammadm"
-        server.password = "P@ssWord"
-        server.ehlo_or_helo_if_needed()
-        if server.has_extn("starttls"):
-            server.starttls(context=ssl_context)
-            server.ehlo_or_helo_if_needed()
-        server.auth_plain()
+        server.ehlo(server_name)
         try:
-            msg = '''
-From: mohammadm@rezilens.com
-Subject: Test
-            '''
-            my_msg = server.sendmail(from_addr="mohammadm@rezilens.com", to_addrs="mohammadm@rezilens.com",
-                                     msg=msg)
+            (code, resp) = server.mail(sender=sender)
+            if code != 250:
+                raise smtplib.SMTPSenderRefused(code, resp, sender)
+            (code, resp) = server.rcpt(recip=recip)
+            if code != 250:
+                raise smtplib.SMTPRecipientsRefused(recip)
             is_relay = True
-            logging.debug("Mail {0}".format(my_msg))
-            logging.debug("Length {0}".format(len(my_msg[0])))
-        except smtplib.SMTPRecipientsRefused as e:
-            logging.debug("SMTPRecipientsRefused")
-            logging.debug(e)
-        except smtplib.SMTPSenderRefused as e:
-            logging.debug("SMTPSenderRefused")
-            logging.debug(e)
-        except smtplib.SMTPNotSupportedError as e:
-            logging.debug("SMTPNotSupportedError")
-            logging.debug(e)
-        except smtplib.SMTPDataError as e:
-            logging.debug("SMTPDataError")
-            logging.debug(e)
-            error = str(e).lower()
-            if not ("denied" in error or "blocked" in error or "spam" in error or "no exist" in error):
-                is_relay = True
-        except Exception as e:
-            logging.debug("Exception on send mail")
-            logging.debug(e)
-            if len(str(e)) == 0:
-                is_relay = True
+        except Exception:
+            is_relay = False
 
         try:
             server.quit()
@@ -2064,14 +2059,14 @@ Subject: Test
             logging.debug(e)
         finally:
             if cache:
-                cache[hostname] = dict(test_relay=False, error=None)
+                cache[hostname] = dict(is_relay=False, error=None)
             return is_relay
 
     except Exception as e:
         error = e.__str__()
         logging.debug(error)
         if cache:
-            cache[hostname] = dict(starttls=False, error=error)
+            cache[hostname] = dict(is_relay=False, error=error)
         raise SMTPError(error)
 
 
@@ -2301,6 +2296,7 @@ def get_mx_hosts(domain, skip_tls=False,
         else:
 
             starttls, warning = mail_server_checks(test_starttls, host["hostname"], STARTTLS_CACHE)
+            host["starttls"] = starttls
             if len(warning) > 0:
                 warnings.append(warning)
             elif not starttls:
@@ -2308,18 +2304,18 @@ def get_mx_hosts(domain, skip_tls=False,
                     host["hostname"]))
 
             tls, warning = mail_server_checks(test_tls, host["hostname"], TLS_CACHE)
+            host["tls"] = tls
             if len(warning) > 0:
                 warnings.append(warning)
             elif not tls:
                 warnings.append("SSL/TLS is not supported on {0}".format(
                     host["hostname"]))
 
-            relay, warning = mail_server_checks(test_relay, host["hostname"])
-            host["is_relay"] = False
+            relay, warning = mail_server_checks(test_relay, host["hostname"], ISRELAY_CACHE)
+            host["is_relay"] = relay
             if len(warning) > 0:
                 warnings.append(warning)
             elif relay:
-                host["is_relay"] = True
                 warnings.append("Potential relay mail server on {0}".format(
                     host["hostname"]))
             warnings = list(set(warnings))
@@ -2547,13 +2543,7 @@ def check_domains(domains, parked=False,
                                            timeout=timeout)
             domain_results["bimi"]["record"] = bimi_query["record"]
             domain_results["bimi"]["location"] = bimi_query["location"]
-            parsed_bimi_record = parse_bimi_record(
-                bimi_query["record"],
-                bimi_query["location"],
-                parked=parked,
-                include_tag_descriptions=include_dmarc_tag_descriptions,
-                nameservers=nameservers,
-                timeout=timeout)
+            parsed_bimi_record = parse_bimi_record(bimi_query["record"])
             domain_results["bimi"]["warnings"] = bimi_query["warnings"]
 
             domain_results["bimi"]["tags"] = parsed_bimi_record["tags"]
